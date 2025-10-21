@@ -1,0 +1,140 @@
+version: '3.8'
+
+services:
+  # Message Broker
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  # Database
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.8.0
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+
+  # Time Series Database
+  influxdb:
+    image: influxdb:2.7
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: password123
+      DOCKER_INFLUXDB_INIT_ORG: ai-ids-ips
+      DOCKER_INFLUXDB_INIT_BUCKET: metrics
+    ports:
+      - "8086:8086"
+    volumes:
+      - influx_data:/var/lib/influxdb2
+
+  # Monitoring
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - influxdb
+
+  # Redis for Caching
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # PostgreSQL for Metadata
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ai_ids_ips
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # MLflow for Model Registry
+  mlflow:
+    image: python:3.9-slim
+    command: >
+      bash -c "
+        pip install mlflow psycopg2-binary &&
+        mlflow server 
+          --backend-store-uri postgresql://admin:password123@postgres:5432/ai_ids_ips 
+          --default-artifact-root /mlflow/artifacts 
+          --host 0.0.0.0 
+          --port 5000
+      "
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    depends_on:
+      - postgres
+
+  # Main Application
+  ai-ids-ips:
+    build: .
+    ports:
+      - "8000:8000"
+      - "8001:8001"  # Model serving
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://admin:password123@postgres:5432/ai_ids_ips
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+    depends_on:
+      - kafka
+      - elasticsearch
+      - redis
+      - postgres
+      - mlflow
+
+volumes:
+  es_data:
+  influx_data:
+  grafana_data:
+  redis_data:
+  postgres_data:
+  mlflow_data:
