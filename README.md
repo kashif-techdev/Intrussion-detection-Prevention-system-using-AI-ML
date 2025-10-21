@@ -31,7 +31,7 @@ This system provides:
 
 1. **Clone and setup**:
 ```bash
-git clone <repo-url>
+git clone <https://github.com/kashif-techdev/Intrussion-detection-Prevention-system-using-AI-ML>
 cd ai-ids-ips
 pip install -r requirements.txt
 ```
